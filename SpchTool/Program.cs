@@ -6,12 +6,14 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Xml;
 using System.Reflection;
+using System.Linq;//ToList extension for hashset
 
 namespace SpchTool
 {
     internal static class Program
     {
         private const string DefaultHashDumpFileName = "spch_hash_dump_dictionary.txt";
+        private const string fileType = "spch";
 
         private static void Main(string[] args)
         {
@@ -37,10 +39,35 @@ namespace SpchTool
 
             List<string> UserStrings = new List<string>();
 
-            foreach (var spchPath in args)
+            //deal with args
+            bool outputHashes = false;
+            string gameId = "TPP";
+            string outputPath = @"D:\Github\mgsv-lookup-strings";
+            List<string> files = new List<string>();
+            int idx = 0;
+            if (args[idx].ToLower() == "-outputhashes" || args[idx].ToLower() == "-o")
             {
-                if (File.Exists(spchPath))
+                outputHashes = true;
+                outputPath = args[idx += 1];
+                gameId = args[idx += 1].ToUpper();
+                Console.WriteLine("Adding to file list");
+                for (int i = idx += 1; i < args.Length; i++)
                 {
+                    AddToFiles(files, args[i], fileType);
+                }
+            } else
+            {
+                Console.WriteLine("Adding to file list");
+                foreach (var arg in args)
+                {
+                    AddToFiles(files, arg, "*");
+                }//foreach args
+            }
+
+
+            foreach (var spchPath in files)
+            {
+                Console.WriteLine(spchPath);
                     // Read input file
                     string fileExtension = Path.GetExtension(spchPath);
                     if (fileExtension.Equals(".xml", StringComparison.OrdinalIgnoreCase))
@@ -52,19 +79,110 @@ namespace SpchTool
                     else if (fileExtension.Equals(".spch", StringComparison.OrdinalIgnoreCase))
                     {
                         SpchFile spch = ReadFromBinary(spchPath, hashManager);
+                    if (!outputHashes)
+                    {
+
                         WriteToXml(spch, Path.GetFileNameWithoutExtension(spchPath) + ".spch.xml");
                     }
                     else
                     {
-                        throw new IOException("Unrecognized input type.");
+                        OutputHashes(gameId, outputPath, spchPath, spch);
+                    }//if outputhashes
+                }
+                else
+                {
+                    Console.WriteLine($"Unrecognized input type: {fileExtension}");
+                }
+            }//foreach files
+
+            // Write hash matches output
+            if (!outputHashes)
+            {
+                WriteHashMatchesToFile(DefaultHashDumpFileName, hashManager);
+                WriteUserStringsToFile(UserStrings);
+            }
+        }
+
+        private static void OutputHashes(string gameId, string outputPath, string spchPath, SpchFile spch)
+        {
+                        var hashSets = new Dictionary<string, HashSet<string>>();
+                        hashSets.Add("LabelName", new HashSet<string>());
+                        hashSets.Add("SbpListId", new HashSet<string>());
+                        hashSets.Add("VoiceType", new HashSet<string>());
+                        hashSets.Add("SbpVoiceClip", new HashSet<string>());
+                        hashSets.Add("AnimationAct", new HashSet<string>());
+
+                        var hashTypeNames = new Dictionary<string, string>();
+                        hashTypeNames.Add("LabelName", "StrCode32");
+                        hashTypeNames.Add("SbpListId", "Unknown32");
+                        hashTypeNames.Add("VoiceType", "StrCode32");
+                        hashTypeNames.Add("SbpVoiceClip", "Unknown32");
+                        hashTypeNames.Add("AnimationAct", "StrCode32");
+
+                        foreach (var label in spch.Labels)
+                        {
+                            hashSets["LabelName"].Add(label.LabelName.HashValue.ToString());
+                            hashSets["SbpListId"].Add(label.SbpListId.ToString());
+                            foreach (var voiceClip in label.VoiceClips)
+                            {
+                                hashSets["VoiceType"].Add(voiceClip.VoiceType.HashValue.ToString());
+                                hashSets["SbpVoiceClip"].Add(voiceClip.SbpVoiceClip.ToString());
+                                hashSets["AnimationAct"].Add(voiceClip.AnimationAct.HashValue.ToString());
+                    }
+                        }//foreach labels
+
+                        foreach (KeyValuePair<string, HashSet<string>> kvp in hashSets)
+                        {
+                            string hashName = kvp.Key;
+                            WriteHashes(kvp.Value, spchPath, hashName, hashTypeNames[hashName], gameId, outputPath);
+                }
+        }//OutputHashes
+
+        private static void AddToFiles(List<string> files, string path, string fileType)
+        {
+            if (File.Exists(path))
+            {
+                files.Add(path);
+            }
+            else
+            {
+                if (Directory.Exists(path))
+                {
+                    var dirFiles = Directory.GetFiles(path, $"*.{fileType}", SearchOption.AllDirectories);
+                    foreach (var file in dirFiles)
+                    {
+                        files.Add(file);
                     }
                 }
             }
+        }//AddToFiles
 
-            // Write hash matches output
-            WriteHashMatchesToFile(DefaultHashDumpFileName, hashManager);
-            WriteUserStringsToFile(UserStrings);
-        }
+        private static string GetAssetsPath(string inputPath)
+        {
+            int index = inputPath.LastIndexOf("Assets");
+            if (index != -1)
+            {
+                return inputPath.Substring(index);
+            }
+            return Path.GetFileName(inputPath);
+        }//GetAssetsPath
+        //tex outputs to mgsv-lookup-strings repo layout
+        private static void WriteHashes(HashSet<string> hashSet, string inputFilePath, string hashName, string hashTypeName, string gameId, string outputPath)
+        {
+            if (hashSet.Count > 0)
+            {
+                string assetsPath = GetAssetsPath(inputFilePath);
+                //OFF string destPath = {inputFilePath}_{hashName}_{hashTypeName}.txt" //Alt: just output to input file path_whatev
+                string destPath = Path.Combine(outputPath, $"{fileType}\\Hashes\\{gameId}\\{hashName}\\{assetsPath}_{hashName}_{hashTypeName}.txt");
+
+                List<string> hashes = hashSet.ToList<string>();
+                hashes.Sort();
+
+                string destDir = Path.GetDirectoryName(destPath);
+                DirectoryInfo di = Directory.CreateDirectory(destDir);
+                File.WriteAllLines(destPath, hashes.ToArray());
+            }
+        }//WriteHashes
 
         public static void WriteToBinary(SpchFile spch, string path)
         {
