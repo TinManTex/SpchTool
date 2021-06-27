@@ -15,6 +15,12 @@ namespace SpchTool
         private const string DefaultHashDumpFileName = "spch_hash_dump_dictionary.txt";
         private const string fileType = "spch";
 
+        class RunSettings
+        {
+            public bool outputHashes = false;
+            public string gameId = "TPP";
+            public string outputPath = @"D:\Github\mgsv-lookup-strings";
+        }//RunSettings
         private static void Main(string[] args)
         {
             var hashManager = new HashManager();
@@ -28,34 +34,46 @@ namespace SpchTool
                 "spch_anim_dictionary.txt",
                 "spch_user_dictionary.txt",
             };
+            List<string> fnvDictionaryNames = new List<string>
+            {
+                "spch_fnv_voiceevent_dictionary.txt",
+                "spch_fnv_voiceid_dictionary.txt",
+                "spch_user_dictionary.txt",
+            };
 
-            List<string> dictionaries = new List<string>();
+            List<string> strCodeDictionaries = new List<string>();
+            List<string> fnvDictionaries = new List<string>();
 
             foreach (var dictionaryPath in dictionaryNames)
                 if (File.Exists(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) + "/" + dictionaryPath))
-                    dictionaries.Add(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) + "/" + dictionaryPath);
+                    strCodeDictionaries.Add(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) + "/" + dictionaryPath);
 
-			hashManager.StrCode32LookupTable = MakeHashLookupTableFromFiles(dictionaries, FoxHash.Type.StrCode32);
+            foreach (var dictionaryPath in fnvDictionaryNames)
+                if (File.Exists(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) + "/" + dictionaryPath))
+                    fnvDictionaries.Add(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) + "/" + dictionaryPath);
+
+            hashManager.StrCode32LookupTable = MakeStrCode32HashLookupTableFromFiles(strCodeDictionaries);
+            hashManager.Fnv1LookupTable = MakeFnv1HashLookupTableFromFiles(fnvDictionaries);
 
             List<string> UserStrings = new List<string>();
 
             //deal with args
-            bool outputHashes = false;
-            string gameId = "TPP";
-            string outputPath = @"D:\Github\mgsv-lookup-strings";
+            RunSettings runSettings = new RunSettings();
+
             List<string> files = new List<string>();
             int idx = 0;
             if (args[idx].ToLower() == "-outputhashes" || args[idx].ToLower() == "-o")
             {
-                outputHashes = true;
-                outputPath = args[idx += 1];
-                gameId = args[idx += 1].ToUpper();
+                runSettings.outputHashes = true;
+                runSettings.outputPath = args[idx += 1];
+                runSettings.gameId = args[idx += 1].ToUpper();
                 Console.WriteLine("Adding to file list");
                 for (int i = idx += 1; i < args.Length; i++)
                 {
                     AddToFiles(files, args[i], fileType);
                 }
-            } else
+            }
+            else
             {
                 Console.WriteLine("Adding to file list");
                 foreach (var arg in args)
@@ -64,10 +82,11 @@ namespace SpchTool
                 }//foreach args
             }
 
-
             foreach (var spchPath in files)
             {
                 Console.WriteLine(spchPath);
+                if (File.Exists(spchPath))
+                {
                     // Read input file
                     string fileExtension = Path.GetExtension(spchPath);
                     if (fileExtension.Equals(".xml", StringComparison.OrdinalIgnoreCase))
@@ -79,63 +98,60 @@ namespace SpchTool
                     else if (fileExtension.Equals(".spch", StringComparison.OrdinalIgnoreCase))
                     {
                         SpchFile spch = ReadFromBinary(spchPath, hashManager);
-                    if (!outputHashes)
-                    {
-
-                        WriteToXml(spch, Path.GetFileNameWithoutExtension(spchPath) + ".spch.xml");
+                        if (!runSettings.outputHashes)
+                        {
+                            WriteToXml(spch, Path.GetFileNameWithoutExtension(spchPath) + ".spch.xml");
+                        }
+                        else
+                        {
+                            OutputHashes(runSettings.gameId, runSettings.outputPath, spchPath, spch);
+                        }//if outputhashes
                     }
                     else
                     {
-                        OutputHashes(gameId, outputPath, spchPath, spch);
-                    }//if outputhashes
+                        Console.WriteLine($"Unrecognized input type: {fileExtension}");
+                    }
                 }
-                else
-                {
-                    Console.WriteLine($"Unrecognized input type: {fileExtension}");
-                }
-            }//foreach files
+            }
 
             // Write hash matches output
-            if (!outputHashes)
-            {
-                WriteHashMatchesToFile(DefaultHashDumpFileName, hashManager);
-                WriteUserStringsToFile(UserStrings);
-            }
-        }
+            WriteHashMatchesToFile(DefaultHashDumpFileName, hashManager);
+            WriteUserStringsToFile(UserStrings);
+        }//Main
 
         private static void OutputHashes(string gameId, string outputPath, string spchPath, SpchFile spch)
         {
-                        var hashSets = new Dictionary<string, HashSet<string>>();
-                        hashSets.Add("LabelName", new HashSet<string>());
-                        hashSets.Add("SbpListId", new HashSet<string>());
-                        hashSets.Add("VoiceType", new HashSet<string>());
-                        hashSets.Add("SbpVoiceClip", new HashSet<string>());
-                        hashSets.Add("AnimationAct", new HashSet<string>());
+            var hashSets = new Dictionary<string, HashSet<string>>();
+            hashSets.Add("LabelName", new HashSet<string>());
+            hashSets.Add("VoiceEvent", new HashSet<string>());
+            hashSets.Add("VoiceType", new HashSet<string>());
+            hashSets.Add("VoiceId", new HashSet<string>());
+            hashSets.Add("AnimationAct", new HashSet<string>());
+            //SYNC mgsv-lookup-strings/spch/spch_hash_types.json
+            var hashTypeNames = new Dictionary<string, string>();
+            hashTypeNames.Add("LabelName", "StrCode32");
+            hashTypeNames.Add("VoiceEvent", "FNV1Hash32");
+            hashTypeNames.Add("VoiceType", "StrCode32");
+            hashTypeNames.Add("VoiceId", "FNV1Hash32");
+            hashTypeNames.Add("AnimationAct", "StrCode32");
 
-                        var hashTypeNames = new Dictionary<string, string>();
-                        hashTypeNames.Add("LabelName", "StrCode32");
-                        hashTypeNames.Add("SbpListId", "Unknown32");
-                        hashTypeNames.Add("VoiceType", "StrCode32");
-                        hashTypeNames.Add("SbpVoiceClip", "Unknown32");
-                        hashTypeNames.Add("AnimationAct", "StrCode32");
-
-                        foreach (var label in spch.Labels)
-                        {
-                            hashSets["LabelName"].Add(label.LabelName.HashValue.ToString());
-                            hashSets["SbpListId"].Add(label.SbpListId.ToString());
-                            foreach (var voiceClip in label.VoiceClips)
-                            {
-                                hashSets["VoiceType"].Add(voiceClip.VoiceType.HashValue.ToString());
-                                hashSets["SbpVoiceClip"].Add(voiceClip.SbpVoiceClip.ToString());
-                                hashSets["AnimationAct"].Add(voiceClip.AnimationAct.HashValue.ToString());
-                    }
-                        }//foreach labels
-
-                        foreach (KeyValuePair<string, HashSet<string>> kvp in hashSets)
-                        {
-                            string hashName = kvp.Key;
-                            WriteHashes(kvp.Value, spchPath, hashName, hashTypeNames[hashName], gameId, outputPath);
+            foreach (var label in spch.Labels)
+            {
+                hashSets["LabelName"].Add(label.LabelName.HashValue.ToString());
+                hashSets["VoiceEvent"].Add(label.VoiceEvent.HashValue.ToString());
+                foreach (var voiceClip in label.VoiceClips)
+                {
+                    hashSets["VoiceType"].Add(voiceClip.VoiceType.HashValue.ToString());
+                    hashSets["VoiceId"].Add(voiceClip.VoiceId.HashValue.ToString());
+                    hashSets["AnimationAct"].Add(voiceClip.AnimationAct.HashValue.ToString());
                 }
+            }//foreach labels
+
+            foreach (KeyValuePair<string, HashSet<string>> kvp in hashSets)
+            {
+                string hashName = kvp.Key;
+                WriteHashes(kvp.Value, spchPath, hashName, hashTypeNames[hashName], gameId, outputPath);
+            }
         }//OutputHashes
 
         private static void AddToFiles(List<string> files, string path, string fileType)
@@ -233,7 +249,7 @@ namespace SpchTool
         /// <summary>
         /// Opens a file containing one string per line from the input table of files, hashes each string, and adds each pair to a lookup table.
         /// </summary>
-        private static Dictionary<uint, string> MakeHashLookupTableFromFiles(List<string> paths, FoxHash.Type hashType)
+        private static Dictionary<uint, string> MakeStrCode32HashLookupTableFromFiles(List<string> paths)
         {
             ConcurrentDictionary<uint, string> table = new ConcurrentDictionary<uint, string>();
 
@@ -255,11 +271,36 @@ namespace SpchTool
             // Hash entries
             Parallel.ForEach(stringLiterals, (string entry) =>
             {
-                if (hashType == FoxHash.Type.StrCode32)
+                uint hash = HashManager.StrCode32(entry);
+                table.TryAdd(hash, entry);
+            });
+
+            return new Dictionary<uint, string>(table);
+        }
+        private static Dictionary<uint, string> MakeFnv1HashLookupTableFromFiles(List<string> paths)
+        {
+            ConcurrentDictionary<uint, string> table = new ConcurrentDictionary<uint, string>();
+
+            // Read file
+            List<string> stringLiterals = new List<string>();
+            foreach (var dictionary in paths)
+            {
+                using (StreamReader file = new StreamReader(dictionary))
                 {
-                    uint hash = HashManager.StrCode32(entry);
-                    table.TryAdd(hash, entry);
+                    // TODO multi-thread
+                    string line;
+                    while ((line = file.ReadLine()) != null)
+                    {
+                        stringLiterals.Add(line);
+                    }
                 }
+            }
+
+            // Hash entries
+            Parallel.ForEach(stringLiterals, (string entry) =>
+            {
+                uint hash = HashManager.FNV1Hash32Str(entry);
+                table.TryAdd(hash, entry);
             });
 
             return new Dictionary<uint, string>(table);
@@ -282,20 +323,24 @@ namespace SpchTool
         {
             foreach (var label in spch.Labels) // Analyze hashes
             {
-                if (IsUserString(label.LabelName.StringLiteral, UserStrings, hashManager))
+                if (IsUserString(label.LabelName.StringLiteral, UserStrings, hashManager.StrCode32LookupTable))
                     UserStrings.Add(label.LabelName.StringLiteral);
+                if (IsUserString(label.VoiceEvent.StringLiteral, UserStrings, hashManager.Fnv1LookupTable))
+                    UserStrings.Add(label.VoiceEvent.StringLiteral);
                 foreach (var voiceClip in label.VoiceClips)
                 {
-                    if (IsUserString(voiceClip.VoiceType.StringLiteral, UserStrings, hashManager))
+                    if (IsUserString(voiceClip.VoiceType.StringLiteral, UserStrings, hashManager.StrCode32LookupTable))
                         UserStrings.Add(voiceClip.VoiceType.StringLiteral);
-                    if (IsUserString(voiceClip.AnimationAct.StringLiteral, UserStrings, hashManager))
+                    if (IsUserString(voiceClip.VoiceId.StringLiteral, UserStrings, hashManager.Fnv1LookupTable))
+                        UserStrings.Add(voiceClip.VoiceId.StringLiteral);
+                    if (IsUserString(voiceClip.AnimationAct.StringLiteral, UserStrings, hashManager.StrCode32LookupTable))
                         UserStrings.Add(voiceClip.AnimationAct.StringLiteral);
                 }
             }
         }
-        public static bool IsUserString(string userString, List<string> list, HashManager hashManager)
+        public static bool IsUserString(string userString, List<string> list, Dictionary<uint,string> dictionaryTable)
         {
-            if (!hashManager.StrCode32LookupTable.ContainsValue(userString) && !list.Contains(userString))
+            if (!dictionaryTable.ContainsValue(userString) && !list.Contains(userString))
                 return true;
             else
                 return false;
